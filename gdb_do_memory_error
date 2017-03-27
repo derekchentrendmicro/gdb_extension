@@ -1,0 +1,20 @@
+set breakpoint pending on
+set pagination off
+set logging overwrite on
+source gdb_btfilter.py
+break ns_malloc
+commands
+ set logging on
+ bt
+ set logging off
+ domemerr
+ continue
+end
+
+set $hit=1
+while $hit != 0
+enable 1
+set $hit=0
+myrun
+end
+q
