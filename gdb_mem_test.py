@@ -16,22 +16,41 @@ def fileSHA1(filename):
 
 class ForceMemoryError(gdb.Command):
 
+  pklfile = 'bt.pickle'
   def __init__ (self):
     super (ForceMemoryError, self).__init__ ("domemerr",
                          gdb.COMMAND_SUPPORT,
                          gdb.COMPLETE_NONE, True)
     #read stack history saved by SaveBacktrace
-    with open('bt.pickle', 'rb') as handle:
+    with open(self.pklfile, 'rb') as handle:
       self.backtraces = pickle.load(handle)
 
   def invoke (self, arg, from_tty):
-    sha1sum = fileSHA1('gdb.txt')
-    if sha1sum in self.backtraces and self.backtraces[sha1sum] == 0:
-       self.backtraces[sha1sum] = 1
-       gdb.execute('set $hit = 1')
-       gdb.execute('set variable size = 0')
-       gdb.execute('disable 1')
-    
+    if 0 == len(arg):
+      sha1sum = fileSHA1('gdb.txt')
+      #gdb.write('{0}. {1}.\n'.format(len(self.backtraces),sha1sum))
+      if sha1sum in self.backtraces and self.backtraces[sha1sum] == 0:
+        self.backtraces[sha1sum] = 1
+        gdb.execute('set $hit = 1')
+        gdb.execute('set variable size = 0')
+        gdb.execute('disable 1')
+    else:
+      args = gdb.string_to_argv(arg)
+      #for a in args:
+      #  gdb.write(a+'\n')
+      if args[0] == 'state':
+        if args[1] == 'save':
+          gdb.write('save current state\n')
+          with open(self.pklfile, 'wb') as handle:
+            pickle.dump(self.backtraces, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        elif args[1] == 'reset':
+          gdb.write('reset state\n')
+          for s in self.backtraces:
+            self.backtraces[s] = 0
+          with open(self.pklfile, 'wb') as handle:
+            pickle.dump(self.backtraces, handle, protocol=pickle.HIGHEST_PROTOCOL)
+            
+
 class SaveBacktrace(gdb.Command):
 
   def __init__ (self):

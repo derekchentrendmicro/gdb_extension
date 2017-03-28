@@ -17,4 +17,5 @@ enable 1
 set $hit=0
 myrun
 end
+domemerr state save
 q
