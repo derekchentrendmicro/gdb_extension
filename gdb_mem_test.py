@@ -10,7 +10,8 @@ def fileSHA1(filename):
      line = 0
      while line != b'':
        line = file.readline()
-       line = re.sub(r'0x[0-9a-f]+',r'####',line) 
+       line = re.sub(r'0x[0-9a-f]+',r'####',line)  #mask address
+       line = re.sub(r'\s\(.+\)\s',r'()',line)     #remove arguments because some may be random
        h.update(line)
    return h.hexdigest()
 
@@ -36,20 +37,17 @@ class ForceMemoryError(gdb.Command):
         gdb.execute('disable 1')
     else:
       args = gdb.string_to_argv(arg)
-      #for a in args:
-      #  gdb.write(a+'\n')
       if args[0] == 'state':
         if args[1] == 'save':
           gdb.write('save current state\n')
-          with open(self.pklfile, 'wb') as handle:
-            pickle.dump(self.backtraces, handle, protocol=pickle.HIGHEST_PROTOCOL)
         elif args[1] == 'reset':
           gdb.write('reset state\n')
           for s in self.backtraces:
             self.backtraces[s] = 0
-          with open(self.pklfile, 'wb') as handle:
-            pickle.dump(self.backtraces, handle, protocol=pickle.HIGHEST_PROTOCOL)
-            
+        else:
+          return
+        with open(self.pklfile, 'wb') as handle:
+          pickle.dump(self.backtraces, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 class SaveBacktrace(gdb.Command):
 
