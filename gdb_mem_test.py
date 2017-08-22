@@ -6,10 +6,10 @@ from subprocess import check_call, CalledProcessError
 
 def fileSHA1(filename):
    h = hashlib.sha1()
-   with open(filename,'rb') as file:
+   with open(filename,'rb') as f:
      line = 0
      while line != b'':
-       line = file.readline()
+       line = f.readline()
        line = re.sub(r'0x[0-9a-f]+',r'####',line)  #mask address
        line = re.sub(r'\s\(.+\)\s',r'()',line)     #remove arguments because some may be random
        h.update(line)
@@ -19,9 +19,7 @@ class ForceMemoryError(gdb.Command):
 
   pklfile = 'bt.pickle'
   def __init__ (self):
-    super (ForceMemoryError, self).__init__ ("domemerr",
-                         gdb.COMMAND_SUPPORT,
-                         gdb.COMPLETE_NONE, True)
+    super (ForceMemoryError, self).__init__ ("domemerr", gdb.COMMAND_SUPPORT, gdb.COMPLETE_NONE, True)
     #read stack history saved by SaveBacktrace
     with open(self.pklfile, 'rb') as handle:
       self.backtraces = pickle.load(handle)
@@ -29,12 +27,14 @@ class ForceMemoryError(gdb.Command):
   def invoke (self, arg, from_tty):
     if 0 == len(arg):
       sha1sum = fileSHA1('gdb.txt')
-      #gdb.write('{0}. {1}.\n'.format(len(self.backtraces),sha1sum))
       if sha1sum in self.backtraces and self.backtraces[sha1sum] == 0:
+        #gdb.write('running sha1sum = {0}\n'.format(sha1sum))
         self.backtraces[sha1sum] = 1
         gdb.execute('set $hit = 1')
         gdb.execute('set variable size = 0')
         gdb.execute('disable 1')
+      #else:
+      #  gdb.write('skip sha1sum = {0}\n'.format(sha1sum))
     else:
       args = gdb.string_to_argv(arg)
       if args[0] == 'state':
@@ -52,15 +52,18 @@ class ForceMemoryError(gdb.Command):
 class SaveBacktrace(gdb.Command):
 
   def __init__ (self):
-    super (SaveBacktrace, self).__init__ ("savebt",
-                         gdb.COMMAND_SUPPORT,
-                         gdb.COMPLETE_NONE, True)
+    super (SaveBacktrace, self).__init__ ("savebt", gdb.COMMAND_SUPPORT, gdb.COMPLETE_NONE, True)
     self.backtraces = {}
+    with open('ignore.pickle', 'rb') as handle:
+      self.ignorelist = pickle.load(handle)
 
   def invoke (self, arg, from_tty):
     sha1sum = fileSHA1('gdb.txt')
-    if sha1sum not in self.backtraces:
+    if sha1sum not in self.backtraces and sha1sum not in self.ignorelist:
       self.backtraces[sha1sum] = 0
+    #  gdb.write('sha1sum = {0} is new\n'.format(sha1sum))
+    #else:
+    #  gdb.write('sha1sum = {0} already exists\n'.format(sha1sum))
     if len(arg):
       with open(arg, 'wb') as handle:
         pickle.dump(self.backtraces, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -72,12 +75,14 @@ class MyRun(gdb.Command):
   '''
 
   def __init__ (self):
-    super (MyRun, self).__init__ ("myrun",
-                         gdb.COMMAND_SUPPORT,
-                         gdb.COMPLETE_NONE, True)
+    super (MyRun, self).__init__ ("myrun", gdb.COMMAND_SUPPORT, gdb.COMPLETE_NONE, True)
 
   def invoke (self, arg, from_tty):
     gdb.execute('run', from_tty)
+    out = gdb.execute('p $_siginfo', from_tty, True)
+    if re.search(r'si_signo = 6',out): # SIGABRT = 6
+      gdb.write('Got SIGABRT\n' + out)
+      #raise gdb.GdbError("SIGABRT") # sometimes you may want to stop the execution once the error occurs.
 
 '''
 for reference. may be useful someday
