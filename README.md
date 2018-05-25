@@ -1,10 +1,21 @@
-* force memory allocation to fail
-  - description
-    break at malloc and save sha1 of each call stack. after collecting all stacks, call the program
-    again and this time set the allocation size to 0. the purpose to calculating sha1 is to save time 
-    by avoiding running the test with same call stack
-  - steps
-    1. gdb -x save_call_stack.gdb --args <command>
-    2. gdb -x fail_malloc.gdb --args <command> >mem.log 2>&1
-    3. grep SIGABRT mem.log
-       if found, look for the call stack that causes the error.
+GDB Extension
+===============
+  - gdbext_oom.py
+    break at malloc and let the size to malloc be 0. during the test, record sha1 of each backtrace so as to skip
+    the same backtrace.
+  - scenarios
+    1. dump backtraces without making malloc fail. this can be used as ignored list. run some scenarios that you're not
+       interested in oom test. rename bt.pkl to bt_ignored.pkl.
+       OOM_DRY_RUN=1 gdb -x oom.gdb --args <command>
+    2. running oom test
+       a. gdb -x oom.gdb --args <command> >mem.log 2>&1
+       b. check errors in the log. the following keywords are just some examples. they may be different depending on user's needs.
+          grep -e SIGABRT -e SIGSEGV mem.log
+          grep "received signal" mem.log
+  - note
+    1. bt.pkl is accumulated. this help reduce the testing time.
+    2. it's suggested to run a test case in minimum scope becasue it will repeat the same scenario many times.
+
+  - enhancement
+    1. some code paths do the same thing but their backtraces are slightly different.
+    2. how to check code coverage?

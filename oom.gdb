@@ -2,7 +2,7 @@ set breakpoint pending on
 set pagination off
 # let each gdb.txt have only one backtrace
 set logging overwrite on
-source gdb_mem_test.py
+source gdbext_oom.py
 break ns_malloc
 commands
  # record the number so as to skip it in the next run
