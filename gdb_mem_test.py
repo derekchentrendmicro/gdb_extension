@@ -1,98 +1,87 @@
+import os
 import re
 import gdb
 import hashlib
 import pickle
-from subprocess import check_call, CalledProcessError
+#from subprocess import check_call, CalledProcessError
 
 def fileSHA1(filename):
    h = hashlib.sha1()
    with open(filename,'rb') as f:
-     line = 0
-     while line != b'':
-       line = f.readline()
-       line = re.sub(r'0x[0-9a-f]+',r'####',line)  #mask address
-       line = re.sub(r'\s\(.+\)\s',r'()',line)     #remove arguments because some may be random
+     line = f.readline()
+     while line:
+       if re.search(r'Perl_pp_entersub',line): break			# not care about functions below Perl_pp_entersub (can't promise this has no side effect though)
+       line = re.sub(r'0x[0-9a-f]+',r'####',line)			# mask address
+       line = re.sub(r'\s\(.+\)\s',r'()',line)				# remove arguments because their values may vary
        h.update(line)
+       line = f.readline()
    return h.hexdigest()
 
-class ForceMemoryError(gdb.Command):
+class OOM(gdb.Command):
 
-  pklfile = 'bt.pickle'
+  bt_pickle = 'bt.pkl'
+  bt_ignored_pickle = 'bt_ignored.pkl'
   def __init__ (self):
-    super (ForceMemoryError, self).__init__ ("domemerr", gdb.COMMAND_SUPPORT, gdb.COMPLETE_NONE, True)
-    #read stack history saved by SaveBacktrace
-    with open(self.pklfile, 'rb') as handle:
-      self.backtraces = pickle.load(handle)
+    super (OOM, self).__init__ ("oom", gdb.COMPLETE_NONE, True)
+
+    self.bt = {}
+    self.bt_ignored = {}
+    self.dry_run = True if os.environ.get('OOM_DRY_RUN') else False	# only check set or unset. not check value, e.g., 0 or false.
+
+    try:								# read bt history (to skip those have been tested)
+      with open(OOM.bt_pickle, 'rb') as f:
+        self.bt = pickle.load(f)
+    except:
+      pass
+
+    try:								# bt that needs not to test
+      with open(OOM.bt_ignored_pickle, 'rb') as f:
+        self.bt_ignored = pickle.load(f)
+    except:
+      pass
 
   def invoke (self, arg, from_tty):
-    if 0 == len(arg):
+    if 0 == len(arg) or self.dry_run:
       sha1sum = fileSHA1('gdb.txt')
-      if sha1sum in self.backtraces and self.backtraces[sha1sum] == 0:
-        #gdb.write('running sha1sum = {0}\n'.format(sha1sum))
-        self.backtraces[sha1sum] = 1
-        gdb.execute('set $hit = 1')
-        gdb.execute('set variable size = 0')
-        gdb.execute('disable 1')
-      #else:
-      #  gdb.write('skip sha1sum = {0}\n'.format(sha1sum))
-    else:
-      args = gdb.string_to_argv(arg)
-      if args[0] == 'state':
-        if args[1] == 'save':
-          gdb.write('save current state\n')
-        elif args[1] == 'reset':
-          gdb.write('reset state\n')
-          for s in self.backtraces:
-            self.backtraces[s] = 0
-        else:
-          return
-        with open(self.pklfile, 'wb') as handle:
-          pickle.dump(self.backtraces, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-class SaveBacktrace(gdb.Command):
-
-  def __init__ (self):
-    super (SaveBacktrace, self).__init__ ("savebt", gdb.COMMAND_SUPPORT, gdb.COMPLETE_NONE, True)
-    self.backtraces = {}
-    with open('ignore.pickle', 'rb') as handle:
-      self.ignorelist = pickle.load(handle)
-
-  def invoke (self, arg, from_tty):
-    sha1sum = fileSHA1('gdb.txt')
-    if sha1sum not in self.backtraces and sha1sum not in self.ignorelist:
-      self.backtraces[sha1sum] = 0
-    #  gdb.write('sha1sum = {0} is new\n'.format(sha1sum))
-    #else:
-    #  gdb.write('sha1sum = {0} already exists\n'.format(sha1sum))
-    if len(arg):
-      with open(arg, 'wb') as handle:
-        pickle.dump(self.backtraces, handle, protocol=pickle.HIGHEST_PROTOCOL)
+      if sha1sum in self.bt_ignored:
+        gdb.write('sha1sum = {0} is ignored.\n'.format(sha1sum))
+      elif sha1sum in self.bt and self.bt[sha1sum] == True:
+        gdb.write('sha1sum = {0} has been tested.\n'.format(sha1sum))
+      else:
+        gdb.write('add sha1sum = {0}\n'.format(sha1sum))
+        self.bt[sha1sum] = not self.dry_run
+        if not self.dry_run:
+          gdb.execute('set $hit = 1')					# not finish all backtraces yet
+          gdb.execute('set variable size = 0')				# let size of malloc be 0
+          gdb.execute('disable 1')					# disable breakpoint. allow only 1 malloc error in each execution to avoid interference.
+    elif arg == 'save':
+        gdb.write('save execution results\n')
+        with open(OOM.bt_pickle, 'wb') as f:
+          pickle.dump(self.bt, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 class MyRun(gdb.Command):
   '''
-  just can't make run command in while loop of gdb script work.
-  wrapping it in the extension works for me.
+  run command in while loop always stops even the stop condition is not met.
+  after replacing it with this class, the problem is fixed. confusing!
   '''
 
   def __init__ (self):
-    super (MyRun, self).__init__ ("myrun", gdb.COMMAND_SUPPORT, gdb.COMPLETE_NONE, True)
+    super (MyRun, self).__init__ ("myrun", gdb.COMPLETE_NONE, True)
 
   def invoke (self, arg, from_tty):
     gdb.execute('run', from_tty)
-    out = gdb.execute('p $_siginfo', from_tty, True)
-    if re.search(r'si_signo = 6',out): # SIGABRT = 6
-      gdb.write('Got SIGABRT\n' + out)
-      #raise gdb.GdbError("SIGABRT") # sometimes you may want to stop the execution once the error occurs.
+    #out = gdb.execute('p $_siginfo', from_tty, True)
+    #if re.search(r'si_signo = 6',out): # SIGABRT = 6
+    #  gdb.write('Got SIGABRT\n' + out)
+    #  #raise gdb.GdbError("SIGABRT") # sometimes you may want to stop the execution once the error occurs.
 
 '''
-for reference. may be useful someday
+for reference. may be useful someday.
 
 class GetShellExecResult(gdb.Command):
 
   def __init__ (self):
-    super (GetShellExecResult, self).__init__ ("shellexec",
-                         gdb.COMMAND_SUPPORT,
-                         gdb.COMPLETE_NONE, True)
+    super (GetShellExecResult, self).__init__ ("shellexec", gdb.COMMAND_SUPPORT, gdb.COMPLETE_NONE, True)
     
   def invoke (self, arg, from_tty):
     try:
@@ -103,7 +92,6 @@ class GetShellExecResult(gdb.Command):
     gdb.execute('bt', from_tty)
 '''
 
-SaveBacktrace()
-ForceMemoryError()
+OOM()
 MyRun()
 
